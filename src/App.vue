@@ -213,26 +213,19 @@ const slides = ref([]);
 const scrollY = ref(0);
 const totalAlturaVh = ref(0);
 
-const SEG_POR_100VH = 30; // cambiar aquí a 31, 32...
-
-// Unidad vertical: 1/100 del alto en ventana normal. En F11 se mantiene fija.
-let unidadNormal = null;
+// Unidad vertical: misma proporción 16:9 que el canvas del administrador
+// (100 unidades = 56.25% del ancho), igual en cualquier pantalla y en F11.
 const fijarUnidad = () => {
-  const esF11 =
-    matchMedia("(display-mode: fullscreen)").matches ||
-    !!document.fullscreenElement ||
-    (Math.abs(innerHeight - screen.height) <= 5 &&
-      Math.abs(innerWidth - screen.width) <= 5);
-  if (!esF11) unidadNormal = innerHeight / 100;
-  const u = unidadNormal ?? (innerWidth * 0.42) / 100; // 0.42 solo si abre ya en F11
-  document.documentElement.style.setProperty("--u", u + "px");
+  document.documentElement.style.setProperty(
+    "--u",
+    (innerWidth * 0.5625) / 100 + "px",
+  );
 };
 
 const duracionEfectiva = () => {
   const dur = audio.value?.duration;
   if (!dur || isNaN(dur)) return 0;
-  // manda el más corto: audio o altura de slides
-  return Math.min(dur, (totalAlturaVh.value / 100) * SEG_POR_100VH);
+  return dur; // la duración del audio se reparte en la altura total
 };
 
 // --- debug de scroll/sincronizacion ---
@@ -479,7 +472,7 @@ const actualizarUI = (current) => {
     .padStart(2, "0");
   timer.value.textContent = `${hours.toString().padStart(2, "0")}:${mins}:${secs}`;
 
-  scrollY.value = (current / SEG_POR_100VH) * 100;
+  scrollY.value = (current / limite) * totalAlturaVh.value;
 
   if (showDebug) {
     const idx = slides.value.findIndex(
@@ -490,7 +483,8 @@ const actualizarUI = (current) => {
     if (idx !== slideActualIdx && idx >= 0) {
       if (slideActualIdx !== null && tiempoEntradaReal !== null) {
         const s = slides.value[slideActualIdx];
-        const duracionEsperada = (Number(s.height_vh) / 100) * SEG_POR_100VH;
+        const duracionEsperada =
+          (Number(s.height_vh) / totalAlturaVh.value) * audio.value.duration;
         const duracionReal = (Date.now() - tiempoEntradaReal) / 1000;
         const diff = duracionReal - duracionEsperada;
 
@@ -544,8 +538,6 @@ onMounted(() => {
   // rAF: misma sincronía exacta con el audio, pero fluido a 60fps.
   const loopActualizarUI = () => {
     if (audioEl && !audioEl.paused) {
-      const limite = duracionEfectiva();
-      if (limite > 0 && audioEl.currentTime >= limite) audioEl.currentTime = 0;
       actualizarUI(audioEl.currentTime);
     }
     requestAnimationFrame(loopActualizarUI);
@@ -574,7 +566,7 @@ onMounted(() => {
       audioEl.currentTime = percentage * limite;
       marker.value.style.left = `${percentage * 100}%`;
 
-      scrollY.value = ((percentage * limite) / SEG_POR_100VH) * 100;
+      scrollY.value = percentage * totalAlturaVh.value;
     });
   }
 });
