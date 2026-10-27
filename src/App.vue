@@ -59,8 +59,8 @@
         :key="slide.id"
         class="image-box"
         :style="{
-          transform: `translateY(${slide.offsetTop - scrollY + 90}vh)`,
-          height: slide.height_vh + 'vh',
+          transform: `translateY(calc(${slide.offsetTop - scrollY} * var(--u) + 100vh))`,
+          height: `calc(${slide.height_vh} * var(--u))`,
           backgroundImage: slide.backgroundUrl
             ? `url(${slide.backgroundUrl})`
             : 'none',
@@ -212,6 +212,28 @@ const showMedia = ref(false);
 const slides = ref([]);
 const scrollY = ref(0);
 const totalAlturaVh = ref(0);
+
+const SEG_POR_100VH = 30; // cambiar aquí a 31, 32...
+
+// Unidad vertical: 1/100 del alto en ventana normal. En F11 se mantiene fija.
+let unidadNormal = null;
+const fijarUnidad = () => {
+  const esF11 =
+    matchMedia("(display-mode: fullscreen)").matches ||
+    !!document.fullscreenElement ||
+    (Math.abs(innerHeight - screen.height) <= 5 &&
+      Math.abs(innerWidth - screen.width) <= 5);
+  if (!esF11) unidadNormal = innerHeight / 100;
+  const u = unidadNormal ?? (innerWidth * 0.42) / 100; // 0.42 solo si abre ya en F11
+  document.documentElement.style.setProperty("--u", u + "px");
+};
+
+const duracionEfectiva = () => {
+  const dur = audio.value?.duration;
+  if (!dur || isNaN(dur)) return 0;
+  // manda el más corto: audio o altura de slides
+  return Math.min(dur, (totalAlturaVh.value / 100) * SEG_POR_100VH);
+};
 
 // --- debug de scroll/sincronizacion ---
 const showDebug = import.meta.env.VITE_SHOW_DEBUG === 'true';
@@ -431,10 +453,9 @@ const handleScroll = (event) => {
   let delta = event.deltaY * SENSIBILIDAD;
   delta = Math.max(-TOPE_POR_EVENTO, Math.min(TOPE_POR_EVENTO, delta));
 
-  const newTime = Math.max(
-    0,
-    Math.min(audio.value.duration, audio.value.currentTime + delta),
-  );
+  const limite = duracionEfectiva();
+  if (!limite) return;
+  const newTime = Math.max(0, Math.min(limite, audio.value.currentTime + delta));
 
   audio.value.currentTime = newTime;
   actualizarUI(newTime);
@@ -443,7 +464,10 @@ const handleScroll = (event) => {
 const actualizarUI = (current) => {
   if (!audio.value || !marker.value || !timer.value) return;
 
-  const percent = (current / audio.value.duration) * 100;
+  const limite = duracionEfectiva();
+  if (!limite) return;
+
+  const percent = (current / limite) * 100;
   marker.value.style.left = `${percent}%`;
 
   const hours = Math.floor(current / 3600);
@@ -455,7 +479,7 @@ const actualizarUI = (current) => {
     .padStart(2, "0");
   timer.value.textContent = `${hours.toString().padStart(2, "0")}:${mins}:${secs}`;
 
-  scrollY.value = (current / audio.value.duration) * totalAlturaVh.value;
+  scrollY.value = (current / SEG_POR_100VH) * 100;
 
   if (showDebug) {
     const idx = slides.value.findIndex(
@@ -466,8 +490,7 @@ const actualizarUI = (current) => {
     if (idx !== slideActualIdx && idx >= 0) {
       if (slideActualIdx !== null && tiempoEntradaReal !== null) {
         const s = slides.value[slideActualIdx];
-        const duracionEsperada =
-          (Number(s.height_vh) / totalAlturaVh.value) * audio.value.duration;
+        const duracionEsperada = (Number(s.height_vh) / 100) * SEG_POR_100VH;
         const duracionReal = (Date.now() - tiempoEntradaReal) / 1000;
         const diff = duracionReal - duracionEsperada;
 
@@ -505,6 +528,8 @@ watch(scrollY, () => {
 });
 
 onMounted(() => {
+  fijarUnidad();
+  window.addEventListener("resize", fijarUnidad);
   // Dispara la carga de audio + datos de slides apenas abre el sitio,
   // sin esperar a que el usuario haga click en play. toggleScroll()
   // reusa esta misma promesa cuando el usuario efectivamente arranca.
@@ -519,6 +544,8 @@ onMounted(() => {
   // rAF: misma sincronía exacta con el audio, pero fluido a 60fps.
   const loopActualizarUI = () => {
     if (audioEl && !audioEl.paused) {
+      const limite = duracionEfectiva();
+      if (limite > 0 && audioEl.currentTime >= limite) audioEl.currentTime = 0;
       actualizarUI(audioEl.currentTime);
     }
     requestAnimationFrame(loopActualizarUI);
@@ -541,12 +568,13 @@ onMounted(() => {
       const clickX = e.clientX - rect.left;
       const percentage = clickX / rect.width;
 
-      if (isNaN(audioEl.duration) || audioEl.duration === 0) return;
+      const limite = duracionEfectiva();
+      if (!limite) return;
 
-      audioEl.currentTime = percentage * audioEl.duration;
+      audioEl.currentTime = percentage * limite;
       marker.value.style.left = `${percentage * 100}%`;
 
-      scrollY.value = percentage * totalAlturaVh.value;
+      scrollY.value = ((percentage * limite) / SEG_POR_100VH) * 100;
     });
   }
 });
